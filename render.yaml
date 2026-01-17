@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: telegram-userbot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python telegram_bot.py
+    envVars:
+      BOT_PORT: "8000"

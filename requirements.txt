@@ -1,0 +1,5 @@
+telethon>=1.42
+fastapi
+uvicorn[standard]
+pydantic
+requests
