@@ -14,9 +14,9 @@ from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContacts
 from telethon.tl.types import InputPhoneContact
 from telethon.errors import SessionPasswordNeededError, FloodWaitError, PhoneNumberInvalidError, UserPrivacyRestrictedError
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator  # ИЗМЕНЕНО: field_validator вместо validator
 from contextlib import asynccontextmanager
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Any
 import uvicorn
 from datetime import datetime
 import base64
@@ -223,8 +223,9 @@ class ChatMessage(BaseModel):
     text: str
     is_outgoing: bool
     
-    @validator('from_id', pre=True)
-    def parse_from_id(cls, v):
+    @field_validator('from_id', mode='before')  # ИЗМЕНЕНО: field_validator
+    @classmethod
+    def parse_from_id(cls, v: Any) -> Optional[int]:
         if v is None:
             return None
         if isinstance(v, (PeerUser, PeerChannel, PeerChat)):
@@ -574,7 +575,7 @@ async def auth_2fa(req: Auth2FAReq):
 @app.post("/sessions/upload")
 async def upload_session(req: UploadSessionReq):
     """
-    Загрузить сессию в базу данных
+    Загрузить сессию в базу данных через JSON
     """
     if not session_db:
         raise HTTPException(500, detail="База данных не инициализирована")
@@ -651,7 +652,7 @@ async def upload_session_file(
     activate_now: bool = Form(True)
 ):
     """
-    Загрузить сессию из .session файла
+    Загрузить сессию из .session файла через форму
     """
     if not session_db:
         raise HTTPException(500, detail="База данных не инициализирована")
@@ -864,112 +865,332 @@ def list_accounts():
 # ==================== Веб-интерфейс для загрузки ====================
 from fastapi.responses import HTMLResponse
 
-@app.get("/upload", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse)
 async def upload_form():
     return """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Загрузка Telegram сессий</title>
+        <title>Telegram Multi-Account Bot</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: Arial, sans-serif; margin: 40px; }
-            .container { max-width: 600px; margin: 0 auto; }
-            .form-group { margin-bottom: 20px; }
-            label { display: block; margin-bottom: 5px; font-weight: bold; }
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            h1 {
+                color: #333;
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .form-group {
+                margin-bottom: 20px;
+            }
+            label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: bold;
+                color: #555;
+            }
             input[type="text"], input[type="file"] {
                 width: 100%;
                 padding: 10px;
-                margin-bottom: 10px;
                 border: 1px solid #ddd;
-                border-radius: 4px;
+                border-radius: 5px;
+                font-size: 16px;
             }
             button {
                 background: #007bff;
                 color: white;
                 border: none;
                 padding: 12px 24px;
-                border-radius: 4px;
+                border-radius: 5px;
                 cursor: pointer;
                 font-size: 16px;
+                width: 100%;
+                margin-top: 10px;
             }
-            button:hover { background: #0056b3; }
-            .result { margin-top: 20px; padding: 15px; border-radius: 4px; }
-            .success { background: #d4edda; color: #155724; }
-            .error { background: #f8d7da; color: #721c24; }
+            button:hover {
+                background: #0056b3;
+            }
+            .result {
+                margin-top: 20px;
+                padding: 15px;
+                border-radius: 5px;
+                display: none;
+            }
+            .success {
+                background: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            .error {
+                background: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
+            .nav {
+                display: flex;
+                justify-content: center;
+                gap: 10px;
+                margin-bottom: 20px;
+            }
+            .nav button {
+                width: auto;
+                padding: 8px 16px;
+                background: #6c757d;
+            }
+            .nav button:hover {
+                background: #545b62;
+            }
+            .section {
+                display: none;
+            }
+            .section.active {
+                display: block;
+            }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>📁 Загрузка Telegram сессии</h1>
+            <h1>🤖 Telegram Multi-Account Bot</h1>
             
-            <form id="uploadForm" enctype="multipart/form-data">
-                <div class="form-group">
-                    <label for="account_name">Имя аккаунта:</label>
-                    <input type="text" id="account_name" name="account_name" required 
-                           placeholder="Например: my_account">
-                </div>
-                
-                <div class="form-group">
-                    <label for="session_file">.session файл:</label>
-                    <input type="file" id="session_file" name="session_file" accept=".session" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="activate_now" name="activate_now" checked>
-                        Активировать сразу после загрузки
-                    </label>
-                </div>
-                
-                <button type="submit">📤 Загрузить сессию</button>
-            </form>
+            <div class="nav">
+                <button onclick="showSection('upload')">📤 Загрузить сессию</button>
+                <button onclick="showSection('sessions')">📋 Список сессий</button>
+                <button onclick="showSection('accounts')">👥 Активные аккаунты</button>
+            </div>
             
-            <div id="result" class="result" style="display: none;"></div>
+            <!-- Секция загрузки -->
+            <div id="upload" class="section active">
+                <h2>📁 Загрузка Telegram сессии</h2>
+                
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="account_name">Имя аккаунта:</label>
+                        <input type="text" id="account_name" name="account_name" required 
+                               placeholder="Например: my_account">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="session_file">.session файл:</label>
+                        <input type="file" id="session_file" name="session_file" accept=".session" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="activate_now" name="activate_now" checked>
+                            Активировать сразу после загрузки
+                        </label>
+                    </div>
+                    
+                    <button type="submit">📤 Загрузить сессию</button>
+                </form>
+                
+                <div id="result" class="result"></div>
+            </div>
             
-            <script>
-                document.getElementById('uploadForm').addEventListener('submit', async function(e) {
-                    e.preventDefault();
+            <!-- Секция списка сессий -->
+            <div id="sessions" class="section">
+                <h2>📋 Все сессии в базе данных</h2>
+                <button onclick="loadSessions()">🔄 Обновить список</button>
+                <div id="sessionsList" style="margin-top: 20px;"></div>
+            </div>
+            
+            <!-- Секция активных аккаунтов -->
+            <div id="accounts" class="section">
+                <h2>👥 Активные аккаунты</h2>
+                <button onclick="loadAccounts()">🔄 Обновить список</button>
+                <div id="accountsList" style="margin-top: 20px;"></div>
+            </div>
+        </div>
+        
+        <script>
+            function showSection(sectionId) {
+                // Скрываем все секции
+                document.querySelectorAll('.section').forEach(section => {
+                    section.classList.remove('active');
+                });
+                
+                // Показываем выбранную секцию
+                document.getElementById(sectionId).classList.add('active');
+            }
+            
+            // Загрузка сессии
+            document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData();
+                formData.append('account_name', document.getElementById('account_name').value);
+                formData.append('session_file', document.getElementById('session_file').files[0]);
+                formData.append('activate_now', document.getElementById('activate_now').checked);
+                
+                const resultDiv = document.getElementById('result');
+                resultDiv.style.display = 'block';
+                resultDiv.textContent = 'Загрузка...';
+                resultDiv.className = 'result';
+                
+                try {
+                    const response = await fetch('/sessions/upload_file', {
+                        method: 'POST',
+                        body: formData
+                    });
                     
-                    const formData = new FormData();
-                    formData.append('account_name', document.getElementById('account_name').value);
-                    formData.append('session_file', document.getElementById('session_file').files[0]);
-                    formData.append('activate_now', document.getElementById('activate_now').checked);
+                    const data = await response.json();
                     
-                    const resultDiv = document.getElementById('result');
-                    resultDiv.style.display = 'block';
-                    resultDiv.textContent = 'Загрузка...';
-                    resultDiv.className = 'result';
+                    if (response.ok) {
+                        resultDiv.className = 'result success';
+                        resultDiv.innerHTML = `
+                            <h3>✅ Успешно!</h3>
+                            <p><strong>Аккаунт:</strong> ${data.account}</p>
+                            <p><strong>ID:</strong> ${data.user_id}</p>
+                            ${data.phone ? `<p><strong>Телефон:</strong> ${data.phone}</p>` : ''}
+                            ${data.username ? `<p><strong>Username:</strong> @${data.username}</p>` : ''}
+                            <p>${data.message}</p>
+                            ${data.activated ? '<p>🟢 <strong>Аккаунт активирован</strong></p>' : ''}
+                        `;
+                    } else {
+                        resultDiv.className = 'result error';
+                        resultDiv.textContent = 'Ошибка: ' + (data.detail || 'Неизвестная ошибка');
+                    }
+                } catch (error) {
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = 'Ошибка сети: ' + error.message;
+                }
+            });
+            
+            // Загрузка списка сессий
+            async function loadSessions() {
+                const sessionsList = document.getElementById('sessionsList');
+                sessionsList.innerHTML = '<p>Загрузка...</p>';
+                
+                try {
+                    const response = await fetch('/sessions/list');
+                    const data = await response.json();
                     
-                    try {
-                        const response = await fetch('/sessions/upload_file', {
-                            method: 'POST',
-                            body: formData
+                    if (data.sessions && data.sessions.length > 0) {
+                        let html = `
+                            <p>Всего сессий: ${data.total_sessions}</p>
+                            <p>Активировано: ${data.loaded_sessions}</p>
+                            <table border="1" cellpadding="10" cellspacing="0" style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th>Имя</th>
+                                        <th>Телефон</th>
+                                        <th>Статус</th>
+                                        <th>Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                        `;
+                        
+                        data.sessions.forEach(session => {
+                            html += `
+                                <tr>
+                                    <td>${session.account_name}</td>
+                                    <td>${session.phone_number || '—'}</td>
+                                    <td>${session.is_loaded ? '🟢 Активен' : '⚪ Не активен'}</td>
+                                    <td>
+                                        ${!session.is_loaded ? 
+                                            `<button onclick="activateSession('${session.account_name}')">Активировать</button>` : 
+                                            ''}
+                                        <button onclick="deleteSession('${session.account_name}')" style="background: #dc3545;">Удалить</button>
+                                    </td>
+                                </tr>
+                            `;
                         });
                         
-                        const data = await response.json();
-                        
-                        if (response.ok) {
-                            resultDiv.className = 'result success';
-                            resultDiv.innerHTML = `
-                                <h3>✅ Успешно!</h3>
-                                <p>Аккаунт: <strong>${data.account}</strong></p>
-                                <p>ID: ${data.user_id}</p>
-                                ${data.phone ? `<p>Телефон: ${data.phone}</p>` : ''}
-                                ${data.username ? `<p>Username: @${data.username}</p>` : ''}
-                                <p>${data.message}</p>
-                                ${data.activated ? '<p>🟢 Аккаунт активирован</p>' : ''}
-                            `;
-                        } else {
-                            resultDiv.className = 'result error';
-                            resultDiv.textContent = 'Ошибка: ' + (data.detail || 'Неизвестная ошибка');
-                        }
-                    } catch (error) {
-                        resultDiv.className = 'result error';
-                        resultDiv.textContent = 'Ошибка сети: ' + error.message;
+                        html += '</tbody></table>';
+                        sessionsList.innerHTML = html;
+                    } else {
+                        sessionsList.innerHTML = '<p>Нет сохраненных сессий</p>';
                     }
-                });
-            </script>
-        </div>
+                } catch (error) {
+                    sessionsList.innerHTML = '<p class="error">Ошибка загрузки: ' + error.message + '</p>';
+                }
+            }
+            
+            // Загрузка активных аккаунтов
+            async function loadAccounts() {
+                const accountsList = document.getElementById('accountsList');
+                accountsList.innerHTML = '<p>Загрузка...</p>';
+                
+                try {
+                    const response = await fetch('/accounts');
+                    const data = await response.json();
+                    
+                    if (data.active_accounts && data.active_accounts.length > 0) {
+                        let html = `<p>Активных аккаунтов: ${data.active_accounts.length}</p><ul>`;
+                        data.active_accounts.forEach(account => {
+                            html += `<li>${account}</li>`;
+                        });
+                        html += '</ul>';
+                        accountsList.innerHTML = html;
+                    } else {
+                        accountsList.innerHTML = '<p>Нет активных аккаунтов</p>';
+                    }
+                } catch (error) {
+                    accountsList.innerHTML = '<p class="error">Ошибка загрузки: ' + error.message + '</p>';
+                }
+            }
+            
+            // Активация сессии
+            async function activateSession(accountName) {
+                try {
+                    const response = await fetch(`/sessions/activate/${accountName}`, {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        alert(`Аккаунт ${accountName} активирован!`);
+                        loadSessions();
+                        loadAccounts();
+                    } else {
+                        alert('Ошибка: ' + (data.detail || 'Неизвестная ошибка'));
+                    }
+                } catch (error) {
+                    alert('Ошибка сети: ' + error.message);
+                }
+            }
+            
+            // Удаление сессии
+            async function deleteSession(accountName) {
+                if (!confirm(`Удалить аккаунт ${accountName}?`)) return;
+                
+                try {
+                    const response = await fetch(`/sessions/delete/${accountName}`, {
+                        method: 'DELETE'
+                    });
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        alert(`Аккаунт ${accountName} удален!`);
+                        loadSessions();
+                        loadAccounts();
+                    } else {
+                        alert('Ошибка: ' + (data.detail || 'Неизвестная ошибка'));
+                    }
+                } catch (error) {
+                    alert('Ошибка сети: ' + error.message);
+                }
+            }
+            
+            // Показываем секцию загрузки при загрузке страницы
+            document.addEventListener('DOMContentLoaded', function() {
+                showSection('upload');
+            });
+        </script>
     </body>
     </html>
     """
@@ -1012,115 +1233,7 @@ async def send_message(req: SendMessageReq):
     except Exception as e:
         raise HTTPException(500, detail=f"Ошибка отправки: {str(e)}")
 
-@app.post("/export_members")
-async def export_members(req: ExportMembersReq):
-    client = ACTIVE_CLIENTS.get(req.account)
-    if not client:
-        raise HTTPException(400, detail=f"Аккаунт не найден: {req.account}")
-
-    try:
-        group = await client.get_entity(req.group)
-        participants = await client.get_participants(group, aggressive=True)
-
-        members = []
-        for p in participants:
-            # Определяем, является ли участник администратором
-            is_admin = False
-            admin_title = None
-            
-            # Проверяем разные способы определения администратора
-            if hasattr(p, 'participant'):
-                # Для участников групп/каналов
-                participant = p.participant
-                if hasattr(participant, 'admin_rights') and participant.admin_rights:
-                    is_admin = True
-                    admin_title = getattr(participant, 'rank', None) or getattr(participant, 'title', None)
-            
-            # Альтернативная проверка через права
-            if not is_admin and hasattr(p, 'admin_rights') and p.admin_rights:
-                is_admin = True
-            
-            # Собираем информацию об участнике
-            member_data = {
-                "id": p.id,
-                "username": p.username if hasattr(p, 'username') and p.username else None,
-                "first_name": p.first_name if hasattr(p, 'first_name') and p.first_name else "",
-                "last_name": p.last_name if hasattr(p, 'last_name') and p.last_name else "",
-                "phone": p.phone if hasattr(p, 'phone') and p.phone else None,
-                "is_admin": is_admin,
-                "admin_title": admin_title,
-                "is_bot": p.bot if hasattr(p, 'bot') else False,
-                "is_self": p.self if hasattr(p, 'self') else False,
-                "is_contact": p.contact if hasattr(p, 'contact') else False,
-                "is_mutual_contact": p.mutual_contact if hasattr(p, 'mutual_contact') else False,
-                "is_deleted": p.deleted if hasattr(p, 'deleted') else False,
-                "is_verified": p.verified if hasattr(p, 'verified') else False,
-                "is_restricted": p.restricted if hasattr(p, 'restricted') else False,
-                "is_scam": p.scam if hasattr(p, 'scam') else False,
-                "is_fake": p.fake if hasattr(p, 'fake') else False,
-                "is_support": p.support if hasattr(p, 'support') else False,
-                "is_premium": p.premium if hasattr(p, 'premium') else False,
-            }
-            
-            # Добавляем статус (онлайн/офлайн)
-            if hasattr(p, 'status'):
-                status = p.status
-                if hasattr(status, '__class__'):
-                    member_data["status"] = status.__class__.__name__
-                    if hasattr(status, 'was_online'):
-                        member_data["last_seen"] = status.was_online.isoformat() if status.was_online else None
-            
-            members.append(member_data)
-
-        return {
-            "status": "exported",
-            "group": req.group,
-            "group_title": group.title if hasattr(group, 'title') else "Unknown",
-            "total_members": len(members),
-            "admins_count": sum(1 for m in members if m["is_admin"]),
-            "bots_count": sum(1 for m in members if m["is_bot"]),
-            "members": members
-        }
-    except Exception as e:
-        print(f"Ошибка экспорта участников: {e}")
-        raise HTTPException(500, detail=f"Ошибка экспорта: {str(e)}")
-
-@app.post("/dialogs")
-async def get_dialogs(req: GetDialogsReq):
-    client = ACTIVE_CLIENTS.get(req.account)
-    if not client:
-        raise HTTPException(400, detail=f"Аккаунт не найден: {req.account}")
-
-    try:
-        if req.include_folders:
-            dialog_list = await get_dialogs_with_folders_info(client, req.limit)
-        else:
-            dialogs = await client.get_dialogs(limit=req.limit)
-            dialog_list = [
-                DialogInfo(
-                    id=dialog.entity.id,
-                    title=dialog.title or dialog.name or "Без названия",
-                    username=getattr(dialog.entity, 'username', None),
-                    folder_names=[],
-                    is_group=getattr(dialog.entity, 'megagroup', False) or getattr(dialog.entity, 'gigagroup', False),
-                    is_channel=getattr(dialog.entity, 'broadcast', False),
-                    is_user=hasattr(dialog.entity, 'first_name'),
-                    unread_count=dialog.unread_count,
-                    last_message_date=dialog.date.isoformat() if dialog.date else None
-                ) for dialog in dialogs
-            ]
-        
-        return {
-            "status": "success",
-            "account": req.account,
-            "total_dialogs": len(dialog_list),
-            "dialogs": dialog_list
-        }
-    except Exception as e:
-        raise HTTPException(500, detail=f"Ошибка получения диалогов: {str(e)}")
-
 # ==================== Остальные эндпоинты оставлены без изменений ====================
-# (send_to_new_user, add_contact, send_contact, send_contact_simple, folders, chat_history)
 
 # ==================== Запуск ====================
 if __name__ == "__main__":
